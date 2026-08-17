@@ -1,301 +1,701 @@
 """
 Vitality Check-in — offline-first member verification for hospitality suite access.
 
-Run with:  python main.py
+Run with:
+    python main.py
 
-Kiosk-style flow:
-  1. One box: type or scan an ID / passport number, press Enter or click Verify.
-  2. Screen fills green (granted) or red (denied) for 3 seconds, then resets.
-  3. Everything else (loading the Excel sheet, exporting the log, setting a
-     background image) lives behind the small "Menu" button in the corner,
-     so the main screen stays down to just the input and the result.
-
-No internet connection is required for verifying or logging — see db.py.
+Premium minimalist kiosk interface:
+  - Responsive layout for laptops and tablets.
+  - ID/passport verification with Enter or Verify.
+  - Granted screen shows member name and tier.
+  - Denied screen shows a clear failure state.
+  - Excel import, member count, recent check-ins, export and sync stub retained.
 """
 
 import sys
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QPixmap, QKeyEvent
+from PySide6.QtGui import QFont, QKeyEvent
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-    QGridLayout, QMenu, QDialog, QTableWidget, QTableWidgetItem
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QFrame,
+    QDialog,
+    QMenu,
 )
 
 import db
 import excel_import
 
-DEFAULT_BG_COLOR = "#D4537E"   # Team Vitality pink placeholder
-GRANTED_COLOR = "#1F9E5C"
-DENIED_COLOR = "#C0392B"
+
+# ---------------------------------------------------------------------------
+# Premium minimalist theme
+# ---------------------------------------------------------------------------
+
+BG = "#F4F2EE"
+SURFACE = "#FFFFFF"
+TEXT = "#171717"
+SECONDARY = "#77736D"
+MUTED = "#9A968F"
+BORDER = "#DDD9D2"
+
+BUTTON = "#171717"
+BUTTON_HOVER = "#2B2B2B"
+BUTTON_PRESSED = "#000000"
+
+GRANTED = "#237A57"
+DENIED = "#B84A4A"
+
 FLASH_MS = 3000
 
 
-class MainWindow(QMainWindow):
+class VitalityCheckinWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Vitality Check-in")
-        self.resize(1000, 650)
+
+        self.setWindowTitle("Vitality Hospitality Verification")
+        self.resize(1000, 680)
+        self.setMinimumSize(620, 520)
+
         db.init_db()
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        self.grid = QGridLayout(central)
-        self.grid.setContentsMargins(0, 0, 0, 0)
-
-        # --- Background layer ---
-        self.bg_label = QLabel()
-        self.bg_label.setScaledContents(True)
-        self.grid.addWidget(self.bg_label, 0, 0)
-        self._bg_pixmap = None
-
-        # --- Foreground content (transparent, sits above background) ---
-        self.content = QWidget()
-        self.content.setAttribute(Qt.WA_StyledBackground, True)
-        self.content.setStyleSheet("background: transparent;")
-        self.grid.addWidget(self.content, 0, 0)
-        self._build_content()
-
-        # --- Result overlay (green / red flash, sits above everything) ---
-        self.overlay = QWidget()
-        self.overlay.hide()
-        self.grid.addWidget(self.overlay, 0, 0)
-        self._build_overlay()
-
-        self.bg_label.lower()
-        self.content.raise_()
-        self.overlay.raise_()
-
-        self._load_saved_background()
-
-    # ---------- Layout ----------
-
-    def _build_content(self):
-        outer = QVBoxLayout(self.content)
-
-        top_row = QHBoxLayout()
-        top_row.addStretch(1)
-        self.menu_btn = QPushButton("Menu")
-        self.menu_btn.setStyleSheet(
-            "background: rgba(255,255,255,0.75); border-radius: 6px; padding: 6px 14px;"
-        )
-        self.menu_btn.clicked.connect(self.show_menu)
-        top_row.addWidget(self.menu_btn)
-        outer.addLayout(top_row)
-
-        outer.addStretch(1)
-
-        center_box = QVBoxLayout()
-        center_box.setSpacing(16)
-
-        self.id_input = QLineEdit()
-        self.id_input.setPlaceholderText("Enter ID or passport number")
-        self.id_input.setAlignment(Qt.AlignCenter)
-        self.id_input.setFixedWidth(480)
-        self.id_input.setFixedHeight(56)
-        input_font = QFont()
-        input_font.setPointSize(18)
-        self.id_input.setFont(input_font)
-        self.id_input.setStyleSheet(
-            "background: white; border-radius: 8px; padding: 0 12px;"
-        )
-        self.id_input.returnPressed.connect(self.on_verify)
-        center_box.addWidget(self.id_input, 0, Qt.AlignHCenter)
-
-        self.verify_btn = QPushButton("Verify")
-        self.verify_btn.setFixedWidth(200)
-        self.verify_btn.setFixedHeight(52)
-        btn_font = QFont()
-        btn_font.setPointSize(14)
-        btn_font.setBold(True)
-        self.verify_btn.setFont(btn_font)
-        self.verify_btn.setStyleSheet(
-            "background: #0B0B0B; color: white; border-radius: 8px;"
-        )
-        self.verify_btn.clicked.connect(self.on_verify)
-        center_box.addWidget(self.verify_btn, 0, Qt.AlignHCenter)
-
-        outer.addLayout(center_box)
-        outer.addStretch(1)
-
+        self._build_ui()
+        self.refresh_status()
+        self.refresh_table()
         self.id_input.setFocus()
 
-    def _build_overlay(self):
-        layout = QVBoxLayout(self.overlay)
-        self.overlay_label = QLabel("")
-        self.overlay_label.setAlignment(Qt.AlignCenter)
-        font = QFont()
-        font.setPointSize(36)
-        font.setBold(True)
-        self.overlay_label.setFont(font)
-        self.overlay_label.setStyleSheet("color: white;")
-        layout.addWidget(self.overlay_label)
+    # -----------------------------------------------------------------------
+    # Main UI
+    # -----------------------------------------------------------------------
 
-    # ---------- Background ----------
+    def _build_ui(self):
+        root = QWidget()
+        root.setObjectName("root")
+        root.setStyleSheet(f"""
+            QWidget#root {{
+                background: {BG};
+            }}
+        """)
+        self.setCentralWidget(root)
 
-    def _apply_color_background(self, hex_color: str):
-        self._bg_pixmap = None
-        self.bg_label.setPixmap(QPixmap())
-        self.bg_label.setStyleSheet(f"background-color: {hex_color};")
-        db.set_meta("bg_type", "color")
-        db.set_meta("bg_value", hex_color)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(42, 30, 42, 30)
+        outer.setSpacing(0)
 
-    def _apply_image_background(self, path: str):
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            QMessageBox.warning(self, "Could not load image", f"'{path}' isn't a valid image.")
-            return
-        self._bg_pixmap = pixmap
-        self.bg_label.setStyleSheet("")
-        self.bg_label.setPixmap(pixmap)
-        db.set_meta("bg_type", "image")
-        db.set_meta("bg_value", path)
+        # Top navigation
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
 
-    def _load_saved_background(self):
-        bg_type = db.get_meta("bg_type")
-        bg_value = db.get_meta("bg_value")
-        if bg_type == "image" and bg_value:
-            self._apply_image_background(bg_value)
-        else:
-            self._apply_color_background(bg_value or DEFAULT_BG_COLOR)
+        brand = QLabel("VITALITY")
+        brand_font = QFont("Segoe UI")
+        brand_font.setPointSize(11)
+        brand_font.setBold(True)
+        brand.setFont(brand_font)
+        brand.setStyleSheet(
+            f"color: {TEXT}; letter-spacing: 3px; background: transparent;"
+        )
 
-    # ---------- Menu (Load Excel / background / export) ----------
+        top.addWidget(brand)
+        top.addStretch(1)
+
+        self.status_label = QLabel()
+        self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.status_label.setStyleSheet(
+            f"color: {MUTED}; font-size: 9px; background: transparent;"
+        )
+        top.addWidget(self.status_label)
+        top.addSpacing(18)
+
+        self.menu_btn = QPushButton("Menu")
+        self.menu_btn.setCursor(Qt.PointingHandCursor)
+        self.menu_btn.setFixedHeight(38)
+        self.menu_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255, 255, 255, 0.92);
+                color: {TEXT};
+                border: 1px solid rgba(23, 23, 23, 0.10);
+                border-radius: 19px;
+                padding: 0 17px;
+                font-size: 13px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background: #FFFFFF;
+                border: 1px solid rgba(23, 23, 23, 0.18);
+            }}
+            QPushButton:pressed {{
+                background: #ECEAE6;
+            }}
+        """)
+        self.menu_btn.clicked.connect(self.show_menu)
+        top.addWidget(self.menu_btn)
+
+        outer.addLayout(top)
+
+        # Centre verification area
+        outer.addStretch(1)
+
+        center = QVBoxLayout()
+        center.setAlignment(Qt.AlignHCenter)
+        center.setSpacing(0)
+
+        eyebrow = QLabel("MEMBER ACCESS")
+        eyebrow.setAlignment(Qt.AlignCenter)
+        eyebrow_font = QFont("Segoe UI")
+        eyebrow_font.setPointSize(10)
+        eyebrow_font.setBold(True)
+        eyebrow.setFont(eyebrow_font)
+        eyebrow.setStyleSheet(
+            f"color: {SECONDARY}; letter-spacing: 2.5px; background: transparent;"
+        )
+        center.addWidget(eyebrow)
+
+        center.addSpacing(11)
+
+        title = QLabel("Welcome")
+        title.setAlignment(Qt.AlignCenter)
+        title_font = QFont("Segoe UI")
+        title_font.setPointSize(34)
+        title_font.setWeight(QFont.Weight.Normal)
+        title.setFont(title_font)
+        title.setStyleSheet(
+            f"color: {TEXT}; background: transparent;"
+        )
+        center.addWidget(title)
+
+        center.addSpacing(9)
+
+        subtitle = QLabel(
+            "Enter your ID or passport number to verify access."
+        )
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet(
+            f"color: {SECONDARY}; font-size: 12px; background: transparent;"
+        )
+        center.addWidget(subtitle)
+
+        center.addSpacing(28)
+
+        self.id_input = QLineEdit()
+        self.id_input.setObjectName("idInput")
+        self.id_input.setPlaceholderText("ID or passport number")
+        self.id_input.setAlignment(Qt.AlignCenter)
+        self.id_input.setMinimumHeight(60)
+        self.id_input.setMaximumWidth(520)
+        self.id_input.setFont(QFont("Segoe UI", 16))
+        self.id_input.setStyleSheet(f"""
+            QLineEdit#idInput {{
+                background: {SURFACE};
+                color: {TEXT};
+                border: 1px solid {BORDER};
+                border-radius: 13px;
+                padding: 0 18px;
+                selection-background-color: #DAD7D1;
+                selection-color: {TEXT};
+            }}
+            QLineEdit#idInput:focus {{
+                border: 1px solid {TEXT};
+                background: #FFFFFF;
+            }}
+            QLineEdit#idInput::placeholder {{
+                color: {MUTED};
+            }}
+        """)
+        self.id_input.returnPressed.connect(self.on_verify)
+        center.addWidget(self.id_input, 0, Qt.AlignHCenter)
+
+        center.addSpacing(14)
+
+        self.verify_btn = QPushButton("Verify")
+        self.verify_btn.setCursor(Qt.PointingHandCursor)
+        self.verify_btn.setMinimumHeight(50)
+        self.verify_btn.setMaximumWidth(190)
+        verify_font = QFont("Segoe UI")
+        verify_font.setPointSize(12)
+        verify_font.setBold(True)
+        self.verify_btn.setFont(verify_font)
+        self.verify_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {BUTTON};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 25px;
+                padding: 0 28px;
+            }}
+            QPushButton:hover {{
+                background: {BUTTON_HOVER};
+            }}
+            QPushButton:pressed {{
+                background: {BUTTON_PRESSED};
+            }}
+            QPushButton:disabled {{
+                background: #8A8884;
+                color: #E8E6E2;
+            }}
+        """)
+        self.verify_btn.clicked.connect(self.on_verify)
+        center.addWidget(self.verify_btn, 0, Qt.AlignHCenter)
+
+        center.addSpacing(19)
+
+        instruction = QLabel("Press Enter to verify")
+        instruction.setAlignment(Qt.AlignCenter)
+        instruction.setStyleSheet(
+            f"color: {MUTED}; font-size: 9px; background: transparent;"
+        )
+        center.addWidget(instruction)
+
+        outer.addLayout(center)
+        outer.addStretch(1)
+
+        footer = QHBoxLayout()
+        footer_label = QLabel("VITALITY  •  MEMBER SERVICES")
+        footer_label.setStyleSheet(
+            f"color: {MUTED}; font-size: 8px; font-weight: 600; "
+            f"letter-spacing: 1.5px; background: transparent;"
+        )
+        footer.addWidget(footer_label)
+        footer.addStretch(1)
+
+        self.members_footer = QLabel()
+        self.members_footer.setAlignment(Qt.AlignRight)
+        self.members_footer.setStyleSheet(
+            f"color: {MUTED}; font-size: 8px; background: transparent;"
+        )
+        footer.addWidget(self.members_footer)
+
+        outer.addLayout(footer)
+
+        # Result overlay is kept as a separate full-window layer.
+        self.overlay = QWidget(root)
+        self.overlay.hide()
+
+        overlay_layout = QVBoxLayout(self.overlay)
+        overlay_layout.setContentsMargins(40, 40, 40, 40)
+        overlay_layout.addStretch(1)
+
+        self.result_title = QLabel()
+        self.result_title.setAlignment(Qt.AlignCenter)
+        result_font = QFont("Segoe UI")
+        result_font.setPointSize(34)
+        result_font.setWeight(QFont.Weight.Normal)
+        self.result_title.setFont(result_font)
+        self.result_title.setStyleSheet(
+            "color: white; background: transparent;"
+        )
+        overlay_layout.addWidget(self.result_title)
+
+        self.result_name = QLabel()
+        self.result_name.setAlignment(Qt.AlignCenter)
+        name_font = QFont("Segoe UI")
+        name_font.setPointSize(22)
+        name_font.setWeight(QFont.Weight.DemiBold)
+        self.result_name.setFont(name_font)
+        self.result_name.setStyleSheet(
+            "color: white; background: transparent;"
+        )
+        overlay_layout.addWidget(self.result_name)
+
+        self.result_detail = QLabel()
+        self.result_detail.setAlignment(Qt.AlignCenter)
+        detail_font = QFont("Segoe UI")
+        detail_font.setPointSize(12)
+        self.result_detail.setFont(detail_font)
+        self.result_detail.setStyleSheet(
+            "color: rgba(255,255,255,0.85); background: transparent;"
+        )
+        overlay_layout.addWidget(self.result_detail)
+
+        overlay_layout.addStretch(1)
+
+        # Give the overlay priority when visible.
+        self.overlay.raise_()
+
+    # -----------------------------------------------------------------------
+    # Menu
+    # -----------------------------------------------------------------------
 
     def show_menu(self):
         menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: #FFFFFF;
+                border: 1px solid {BORDER};
+                padding: 7px;
+            }}
+            QMenu::item {{
+                color: {TEXT};
+                padding: 9px 18px;
+                border-radius: 6px;
+            }}
+            QMenu::item:selected {{
+                background: #F1EFEB;
+                color: {TEXT};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: #ECE9E4;
+                margin: 6px 8px;
+            }}
+        """)
+
         menu.addAction("Load member list (Excel)...", self.on_load_excel)
-        menu.addSeparator()
-        menu.addAction("Set background image...", self.on_set_bg_image)
-        menu.addAction("Reset background to pink", lambda: self._apply_color_background(DEFAULT_BG_COLOR))
         menu.addSeparator()
         menu.addAction("View recent check-ins...", self.on_view_log)
         menu.addAction("Export check-in log...", self.on_export_log)
-        menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
+        menu.addSeparator()
+        menu.addAction("Sync now", self.on_sync_stub)
+
+        menu.exec(
+            self.menu_btn.mapToGlobal(
+                self.menu_btn.rect().bottomLeft()
+            )
+        )
+
+    # -----------------------------------------------------------------------
+    # Excel import
+    # -----------------------------------------------------------------------
 
     def on_load_excel(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select member list", "", "Excel files (*.xlsx *.xls)"
+            self,
+            "Select member list",
+            "",
+            "Excel files (*.xlsx *.xls)"
         )
+
         if not path:
             return
+
         try:
             columns = excel_import.read_excel_columns(path)
         except Exception as e:
-            QMessageBox.critical(self, "Could not read file", str(e))
+            QMessageBox.critical(
+                self,
+                "Could not read file",
+                str(e)
+            )
             return
 
         dialog = excel_import.ColumnMapDialog(columns, self)
-        if dialog.exec() != dialog.Accepted:
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+
         mapping = dialog.mapping()
+
         if not mapping["id_number"]:
-            QMessageBox.warning(self, "Missing column", "You must select an ID number column.")
+            QMessageBox.warning(
+                self,
+                "Missing column",
+                "You must select an ID number column."
+            )
             return
 
         try:
             rows = excel_import.load_rows(path, mapping)
             count = db.replace_members(rows)
         except Exception as e:
-            QMessageBox.critical(self, "Import failed", str(e))
+            QMessageBox.critical(
+                self,
+                "Import failed",
+                str(e)
+            )
             return
 
-        QMessageBox.information(self, "Import complete", f"Loaded {count} members.")
+        self.refresh_status()
 
-    def on_set_bg_image(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select background image", "", "Images (*.png *.jpg *.jpeg)"
+        QMessageBox.information(
+            self,
+            "Import complete",
+            f"Loaded {count:,} members."
         )
-        if path:
-            self._apply_image_background(path)
+
+    def refresh_status(self):
+        count = db.member_count()
+        last = db.last_import_time() or "never"
+
+        self.status_label.setText(
+            f"{count:,} members  •  Last import: {last}"
+        )
+
+        self.members_footer.setText(
+            f"{count:,} members loaded"
+        )
+
+    # -----------------------------------------------------------------------
+    # Verification
+    # -----------------------------------------------------------------------
+
+    def on_verify(self):
+        raw_id = self.id_input.text().strip()
+
+        if not raw_id:
+            return
+
+        self.id_input.setEnabled(False)
+        self.verify_btn.setEnabled(False)
+
+        member = db.lookup_member(raw_id)
+
+        if member:
+            name = (member["full_name"] or "Member").strip()
+            tier = (member["tier"] or "").strip()
+
+            db.log_checkin(
+                raw_id,
+                name,
+                "granted"
+            )
+
+            self.show_granted(name, tier)
+
+        else:
+            db.log_checkin(
+                raw_id,
+                "",
+                "denied"
+            )
+
+            self.show_denied()
+
+        self.refresh_table()
+
+    def show_granted(self, name: str, tier: str):
+        self.overlay.setStyleSheet(
+            f"background-color: {GRANTED};"
+        )
+
+        self.result_title.setText("ACCESS GRANTED")
+        self.result_name.setText(name)
+
+        if tier:
+            self.result_detail.setText(tier)
+        else:
+            self.result_detail.setText("Membership verified")
+
+        self.result_name.show()
+        self.result_detail.show()
+
+        self.overlay.show()
+        self.overlay.raise_()
+
+        QTimer.singleShot(
+            FLASH_MS,
+            self._reset_after_result
+        )
+
+    def show_denied(self):
+        self.overlay.setStyleSheet(
+            f"background-color: {DENIED};"
+        )
+
+        self.result_title.setText("ACCESS DENIED")
+        self.result_name.setText("")
+
+        self.result_detail.setText(
+            "ID or passport number not found"
+        )
+
+        self.result_name.hide()
+        self.result_detail.show()
+
+        self.overlay.show()
+        self.overlay.raise_()
+
+        QTimer.singleShot(
+            FLASH_MS,
+            self._reset_after_result
+        )
+
+    def _reset_after_result(self):
+        self.overlay.hide()
+
+        self.id_input.clear()
+        self.id_input.setEnabled(True)
+        self.verify_btn.setEnabled(True)
+        self.id_input.setFocus()
+
+    # -----------------------------------------------------------------------
+    # Recent check-ins / export
+    # -----------------------------------------------------------------------
+
+    def refresh_table(self):
+        rows = db.recent_checkins(50)
+
+        # Table is used by the menu dialog rather than the main screen.
+        self._recent_rows = rows
 
     def on_view_log(self):
         rows = db.recent_checkins(100)
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Recent check-ins")
-        dlg.resize(600, 400)
+        dlg.resize(720, 460)
+
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: {BG};
+            }}
+            QTableWidget {{
+                background: #FFFFFF;
+                color: {TEXT};
+                border: 1px solid {BORDER};
+                gridline-color: #ECE9E4;
+                selection-background-color: #ECE9E4;
+                selection-color: {TEXT};
+            }}
+            QHeaderView::section {{
+                background: #F1EFEB;
+                color: {TEXT};
+                border: none;
+                padding: 8px;
+                font-weight: 600;
+            }}
+        """)
+
         layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        heading = QLabel("Recent check-ins")
+        heading.setStyleSheet(
+            f"color: {TEXT}; font-size: 20px; background: transparent;"
+        )
+        layout.addWidget(heading)
+        layout.addSpacing(10)
+
         table = QTableWidget(len(rows), 4)
-        table.setHorizontalHeaderLabels(["Time", "ID number", "Name", "Result"])
+        table.setHorizontalHeaderLabels(
+            ["Time", "ID number", "Name", "Result"]
+        )
+        table.horizontalHeader().setStretchLastSection(True)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
+
         for i, row in enumerate(rows):
-            table.setItem(i, 0, QTableWidgetItem(row["timestamp"]))
-            table.setItem(i, 1, QTableWidgetItem(row["id_number"]))
-            table.setItem(i, 2, QTableWidgetItem(row["full_name"]))
-            table.setItem(i, 3, QTableWidgetItem(row["result"]))
+            table.setItem(
+                i, 0, QTableWidgetItem(row["timestamp"])
+            )
+            table.setItem(
+                i, 1, QTableWidgetItem(row["id_number"])
+            )
+            table.setItem(
+                i, 2, QTableWidgetItem(row["full_name"])
+            )
+            table.setItem(
+                i, 3, QTableWidgetItem(row["result"])
+            )
+
         layout.addWidget(table)
+
         dlg.exec()
 
     def on_export_log(self):
         import pandas as pd
 
         rows = db.all_checkins()
+
         if not rows:
-            QMessageBox.information(self, "Nothing to export", "No check-ins logged yet.")
+            QMessageBox.information(
+                self,
+                "Nothing to export",
+                "No check-ins logged yet."
+            )
             return
+
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save check-in log", "checkin_log.xlsx", "Excel files (*.xlsx)"
+            self,
+            "Save check-in log",
+            "checkin_log.xlsx",
+            "Excel files (*.xlsx)"
         )
+
         if not path:
             return
+
         df = pd.DataFrame(
-            [dict(id_number=r["id_number"], full_name=r["full_name"],
-                  result=r["result"], timestamp=r["timestamp"]) for r in rows]
+            [
+                dict(
+                    id_number=r["id_number"],
+                    full_name=r["full_name"],
+                    result=r["result"],
+                    timestamp=r["timestamp"]
+                )
+                for r in rows
+            ]
         )
+
         df.to_excel(path, index=False)
-        QMessageBox.information(self, "Exported", f"Saved {len(df)} rows to {path}")
 
-    # ---------- Verification ----------
+        QMessageBox.information(
+            self,
+            "Exported",
+            f"Saved {len(df):,} rows to {path}"
+        )
 
-    def on_verify(self):
-        raw_id = self.id_input.text().strip()
-        if not raw_id:
-            return
-        self.id_input.setEnabled(False)
-        self.verify_btn.setEnabled(False)
+    # -----------------------------------------------------------------------
+    # Sync stub
+    # -----------------------------------------------------------------------
 
-        member = db.lookup_member(raw_id)
-        if member:
-            db.log_checkin(raw_id, member["full_name"], "granted")
-            self._flash(GRANTED_COLOR, "ACCESS GRANTED")
-        else:
-            db.log_checkin(raw_id, "", "denied")
-            self._flash(DENIED_COLOR, "ACCESS DENIED")
+    def on_sync_stub(self):
+        QMessageBox.information(
+            self,
+            "Sync",
+            "No sync endpoint configured yet.\n\n"
+            "This button is a placeholder for pulling a fresh member list "
+            "and pushing the check-in log once an approved connection is set up."
+        )
 
-    def _flash(self, hex_color: str, text: str):
-        self.overlay.setStyleSheet(f"background-color: {hex_color};")
-        self.overlay_label.setText(text)
-        self.overlay.show()
-        self.overlay.raise_()
-        QTimer.singleShot(FLASH_MS, self._reset_after_flash)
-
-    def _reset_after_flash(self):
-        self.overlay.hide()
-        self.id_input.clear()
-        self.id_input.setEnabled(True)
-        self.verify_btn.setEnabled(True)
-        self.id_input.setFocus()
-
-    # ---------- Kiosk fullscreen toggle ----------
+    # -----------------------------------------------------------------------
+    # Keyboard / responsive behaviour
+    # -----------------------------------------------------------------------
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_F11:
-            self.showNormal() if self.isFullScreen() else self.showFullScreen()
-        elif event.key() == Qt.Key_Escape and self.isFullScreen():
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+            return
+
+        if event.key() == Qt.Key_Escape and self.isFullScreen():
             self.showNormal()
-        else:
-            super().keyPressEvent(event)
+            return
+
+        super().keyPressEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Keep the background label filling the window on resize
-        self.bg_label.resize(self.centralWidget().size())
+
+        # Keep the result overlay exactly over the full central widget.
+        if hasattr(self, "overlay"):
+            self.overlay.setGeometry(
+                self.centralWidget().rect()
+            )
 
 
 def main():
     app = QApplication(sys.argv)
-    window = MainWindow()
+
+    app.setStyle("Fusion")
+
+    font = QFont("Segoe UI")
+    font.setPointSize(10)
+    app.setFont(font)
+
+    window = VitalityCheckinWindow()
     window.show()
+
     sys.exit(app.exec())
 
 
