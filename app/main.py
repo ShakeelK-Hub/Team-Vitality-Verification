@@ -43,18 +43,26 @@ import excel_import
 # Premium minimalist theme
 # ---------------------------------------------------------------------------
 
-BG = "#F4F2EE"
+BG = "#F7F6F2"
 SURFACE = "#FFFFFF"
-TEXT = "#171717"
-SECONDARY = "#77736D"
-MUTED = "#9A968F"
-BORDER = "#DDD9D2"
+TEXT = "#1C1B1A"
+SECONDARY = "#6E6A64"
+MUTED = "#A39E96"
+BORDER = "#E2DED6"
 
-BUTTON = "#171717"
-BUTTON_HOVER = "#2B2B2B"
-BUTTON_PRESSED = "#000000"
+# Vitality pink — closest match to Discovery's brand pink. Not sourced from
+# an official brand guideline PDF, so eyedropper the real app/site if this
+# needs to be pixel-exact.
+ACCENT = "#E6007E"
+ACCENT_HOVER = "#C40069"
+ACCENT_PRESSED = "#A3005A"
+ACCENT_TINT = "#FDEAF3"
 
-GRANTED = "#237A57"
+BUTTON = ACCENT
+BUTTON_HOVER = ACCENT_HOVER
+BUTTON_PRESSED = ACCENT_PRESSED
+
+GRANTED = "#1E6B4E"
 DENIED = "#B84A4A"
 
 FLASH_MS = 3000
@@ -97,7 +105,10 @@ class VitalityCheckinWindow(QMainWindow):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
 
-        brand = QLabel("VITALITY")
+        brand = QLabel(
+            f'<span style="color:{ACCENT};">V</span>ITALITY'
+        )
+        brand.setTextFormat(Qt.RichText)
         brand_font = QFont("Segoe UI")
         brand_font.setPointSize(11)
         brand_font.setBold(True)
@@ -161,6 +172,15 @@ class VitalityCheckinWindow(QMainWindow):
         )
         center.addWidget(eyebrow)
 
+        center.addSpacing(8)
+
+        eyebrow_line = QFrame()
+        eyebrow_line.setFixedSize(28, 2)
+        eyebrow_line.setStyleSheet(
+            f"background: {ACCENT}; border-radius: 1px;"
+        )
+        center.addWidget(eyebrow_line, 0, Qt.AlignHCenter)
+
         center.addSpacing(11)
 
         title = QLabel("Welcome")
@@ -205,7 +225,7 @@ class VitalityCheckinWindow(QMainWindow):
                 selection-color: {TEXT};
             }}
             QLineEdit#idInput:focus {{
-                border: 1px solid {TEXT};
+                border: 1.5px solid {ACCENT};
                 background: #FFFFFF;
             }}
             QLineEdit#idInput::placeholder {{
@@ -256,6 +276,19 @@ class VitalityCheckinWindow(QMainWindow):
         )
         center.addWidget(instruction)
 
+        center.addSpacing(22)
+
+        tagline = QLabel("Every healthy step counts.")
+        tagline.setAlignment(Qt.AlignCenter)
+        tagline_font = QFont("Segoe UI")
+        tagline_font.setItalic(True)
+        tagline_font.setPointSize(9)
+        tagline.setFont(tagline_font)
+        tagline.setStyleSheet(
+            f"color: {MUTED}; background: transparent;"
+        )
+        center.addWidget(tagline)
+
         outer.addLayout(center)
         outer.addStretch(1)
 
@@ -284,6 +317,22 @@ class VitalityCheckinWindow(QMainWindow):
         overlay_layout = QVBoxLayout(self.overlay)
         overlay_layout.setContentsMargins(40, 40, 40, 40)
         overlay_layout.addStretch(1)
+
+        self.result_icon = QLabel("\u2713")
+        self.result_icon.setAlignment(Qt.AlignCenter)
+        self.result_icon.setFixedSize(56, 56)
+        icon_font = QFont("Segoe UI")
+        icon_font.setPointSize(22)
+        self.result_icon.setFont(icon_font)
+        self.result_icon.setStyleSheet("""
+            color: white;
+            background: transparent;
+            border: 1.5px solid rgba(255,255,255,0.85);
+            border-radius: 28px;
+        """)
+        overlay_layout.addWidget(self.result_icon, 0, Qt.AlignHCenter)
+        overlay_layout.addSpacing(14)
+        self.result_icon.hide()
 
         self.result_title = QLabel()
         self.result_title.setAlignment(Qt.AlignCenter)
@@ -315,7 +364,7 @@ class VitalityCheckinWindow(QMainWindow):
         self.result_detail.setStyleSheet(
             "color: rgba(255,255,255,0.85); background: transparent;"
         )
-        overlay_layout.addWidget(self.result_detail)
+        overlay_layout.addWidget(self.result_detail, 0, Qt.AlignHCenter)
 
         overlay_layout.addStretch(1)
 
@@ -451,7 +500,6 @@ class VitalityCheckinWindow(QMainWindow):
 
         if member:
             name = (member["full_name"] or "Member").strip()
-            tier = (member["tier"] or "").strip()
 
             db.log_checkin(
                 raw_id,
@@ -459,7 +507,7 @@ class VitalityCheckinWindow(QMainWindow):
                 "granted"
             )
 
-            self.show_granted(name, tier)
+            self.show_granted(name)
 
         else:
             db.log_checkin(
@@ -472,7 +520,7 @@ class VitalityCheckinWindow(QMainWindow):
 
         self.refresh_table()
 
-    def show_granted(self, name: str, tier: str):
+    def show_granted(self, name: str):
         self.overlay.setStyleSheet(
             f"background-color: {GRANTED};"
         )
@@ -480,11 +528,12 @@ class VitalityCheckinWindow(QMainWindow):
         self.result_title.setText("ACCESS GRANTED")
         self.result_name.setText(name)
 
-        if tier:
-            self.result_detail.setText(tier)
-        else:
-            self.result_detail.setText("Membership verified")
+        self.result_detail.setText("Membership verified")
+        self.result_detail.setStyleSheet(
+            "color: rgba(255,255,255,0.85); background: transparent;"
+        )
 
+        self.result_icon.show()
         self.result_name.show()
         self.result_detail.show()
 
@@ -504,6 +553,10 @@ class VitalityCheckinWindow(QMainWindow):
         self.result_title.setText("ACCESS DENIED")
         self.result_name.setText("")
 
+        self.result_icon.hide()
+        self.result_detail.setStyleSheet(
+            "color: rgba(255,255,255,0.85); background: transparent;"
+        )
         self.result_detail.setText(
             "ID or passport number not found"
         )

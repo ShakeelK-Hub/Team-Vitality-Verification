@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 
 class ColumnMapDialog(QDialog):
     """Small dialog letting the user pick which spreadsheet columns hold
-    the ID number, full name, and (optionally) membership tier."""
+    the ID number and full name."""
 
     def __init__(self, columns: list[str], parent=None):
         super().__init__(parent)
@@ -23,20 +23,17 @@ class ColumnMapDialog(QDialog):
         form = QFormLayout()
         self.id_combo = QComboBox()
         self.name_combo = QComboBox()
-        self.tier_combo = QComboBox()
 
         options = ["(none)"] + columns
-        for combo in (self.id_combo, self.name_combo, self.tier_combo):
+        for combo in (self.id_combo, self.name_combo):
             combo.addItems(options)
 
         # Best-effort auto guess based on common header wording
         self._auto_select(self.id_combo, columns, ["id number", "id no", "idnumber", "id"])
         self._auto_select(self.name_combo, columns, ["full name", "name", "member name"])
-        self._auto_select(self.tier_combo, columns, ["tier", "status", "membership"])
 
         form.addRow("ID number column:", self.id_combo)
         form.addRow("Name column:", self.name_combo)
-        form.addRow("Tier / status column:", self.tier_combo)
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -56,7 +53,6 @@ class ColumnMapDialog(QDialog):
         return {
             "id_number": None if self.id_combo.currentText() == "(none)" else self.id_combo.currentText(),
             "full_name": None if self.name_combo.currentText() == "(none)" else self.name_combo.currentText(),
-            "tier": None if self.tier_combo.currentText() == "(none)" else self.tier_combo.currentText(),
         }
 
 
@@ -75,7 +71,6 @@ def load_rows(path: str, mapping: dict) -> list[dict]:
             {
                 "id_number": str(r[mapping["id_number"]]).strip() if mapping["id_number"] else "",
                 "full_name": str(r[mapping["full_name"]]).strip() if mapping["full_name"] else "",
-                "tier": str(r[mapping["tier"]]).strip() if mapping["tier"] else "",
             }
         )
     return rows

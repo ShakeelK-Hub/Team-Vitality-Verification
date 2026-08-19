@@ -32,7 +32,6 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS members (
             id_number   TEXT PRIMARY KEY,
             full_name   TEXT,
-            tier        TEXT,
             extra_json  TEXT,
             imported_at TEXT
         );
@@ -59,7 +58,7 @@ def init_db() -> None:
 def replace_members(rows: list[dict]) -> int:
     """
     Wipes and reloads the members table from a freshly imported Excel sheet.
-    rows: list of dicts with keys 'id_number', 'full_name', 'tier' (tier optional).
+    rows: list of dicts with keys 'id_number', 'full_name'.
     Returns the number of rows loaded.
     """
     conn = get_connection()
@@ -67,10 +66,10 @@ def replace_members(rows: list[dict]) -> int:
     with conn:
         conn.execute("DELETE FROM members")
         conn.executemany(
-            "INSERT OR REPLACE INTO members (id_number, full_name, tier, imported_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO members (id_number, full_name, imported_at) "
+            "VALUES (?, ?, ?)",
             [
-                (_normalise_id(r["id_number"]), r.get("full_name", ""), r.get("tier", ""), now)
+                (_normalise_id(r["id_number"]), r.get("full_name", ""), now)
                 for r in rows
                 if r.get("id_number")
             ],
