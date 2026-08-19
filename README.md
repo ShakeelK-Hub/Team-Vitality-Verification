@@ -39,7 +39,7 @@ Hospitality check-in is an operational workflow where reliability matters more t
 
 **Member data**
 - Import member records from Excel.
-- Map ID, name and tier columns from varying export formats.
+- Map ID and name columns from varying export formats.
 - Cache the approved member list locally in SQLite.
 
 **Verification**
@@ -124,14 +124,14 @@ Team-Vitality-Verification/
 │   └── excel_import.py     # Excel import and column mapping
 ├── docs/
 │   ├── architecture.md    # System design and data flow
-│   └── deployment.md      # Local, Codespaces and Windows deployment
+│   ├── deployment.md      # Local, Codespaces and Windows deployment
+│   ├── security.md        # Security and privacy guidance
+│   └── contributing.md    # Contribution guidelines
 ├── .github/
 │   ├── ISSUE_TEMPLATE/     # Standardised issue reporting
 │   └── workflows/          # Automated validation
 ├── .gitignore
 ├── requirements.txt
-├── SECURITY.md
-├── CONTRIBUTING.md
 └── README.md
 ```
 
@@ -201,9 +201,9 @@ For real deployments:
 - Use an organisation-approved device and storage location.
 - Apply appropriate access controls.
 - Follow applicable data-retention and privacy requirements.
-- Obtain manager/IT approval before connecting organisational systems.
+- Obtain approval before connecting organisational systems.
 
-Read [`SECURITY.md`](SECURITY.md).
+Read [`docs/security.md`](docs/security.md).
 
 ## Roadmap
 
@@ -212,7 +212,7 @@ Read [`SECURITY.md`](SECURITY.md).
 - [x] Offline member verification
 - [x] Local SQLite member cache
 - [x] Excel member import
-- [x] ID / name / tier mapping
+- [x] ID / name mapping
 - [x] Granted and denied states
 - [x] Local check-in logging
 - [x] Excel check-in export
@@ -238,7 +238,7 @@ The local verification workflow is implemented today; central synchronisation is
 
 This repository is primarily a portfolio and prototype project. Contributions should preserve the offline-first design, avoid real personal data, and include appropriate documentation for meaningful behavioural changes.
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+See [`docs/contributing.md`](docs/contributing.md).
 
 ## License
 
